@@ -15,9 +15,9 @@ module "eks" {
 
   eks_managed_node_groups = {
     bedrock_nodes = {
-      desired_size = 2
-      min_size     = 1
-      max_size     = 2
+      desired_size = 3
+      min_size     = 2
+      max_size     = 4
 
       instance_types = ["t3.micro"]
 
