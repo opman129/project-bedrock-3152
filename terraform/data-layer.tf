@@ -54,6 +54,8 @@ resource "aws_db_instance" "mysql" {
   allocated_storage = 20
   storage_type      = "gp2"
 
+  db_name = "orders"
+
   username = "admin"
   password = "ChangeThisPassword123!"
 
@@ -67,6 +69,10 @@ resource "aws_db_instance" "mysql" {
   tags = {
     Project = "karatu-2025-capstone"
   }
+
+  storage_encrypted = true
+
+  backup_retention_period = 0
 }
 
 resource "aws_db_instance" "postgres" {
@@ -79,6 +85,8 @@ resource "aws_db_instance" "postgres" {
 
   allocated_storage = 20
   storage_type      = "gp2"
+
+  db_name = "catalog"
 
   username = "postgresadmin"
   password = "ChangeThisPassword123!"
@@ -93,6 +101,10 @@ resource "aws_db_instance" "postgres" {
   tags = {
     Project = "karatu-2025-capstone"
   }
+
+  storage_encrypted = true
+
+  backup_retention_period = 0
 }
 
 resource "aws_dynamodb_table" "products" {
