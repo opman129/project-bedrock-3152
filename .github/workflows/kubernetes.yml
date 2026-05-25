@@ -1,0 +1,27 @@
+name: Kubernetes Validation
+
+on:
+  push:
+    paths:
+      - 'kubernetes/**'
+
+  pull_request:
+    paths:
+      - 'kubernetes/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Validate Kubernetes Manifests
+        run: |
+          find kubernetes -name "*.yaml" -o -name "*.yml" | while read file; do
+            kubectl apply --dry-run=client -f "$file"
+          done

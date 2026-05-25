@@ -33,6 +33,8 @@ terraform.rc
 *.log
 
 # Environment files
+*.pem
+*.key
 .env
 .env.*
 
