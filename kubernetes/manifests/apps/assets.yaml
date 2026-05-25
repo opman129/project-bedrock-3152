@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: assets
+  namespace: retail-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: assets
+  template:
+    metadata:
+      labels:
+        app: assets
+    spec:
+      containers:
+        - name: assets
+          image: public.ecr.aws/aws-containers/retail-store-sample-assets:0.8.5
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "32Mi"
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: assets
+  namespace: retail-app
+spec:
+  selector:
+    app: assets
+  ports:
+    - port: 80
+      targetPort: 8080

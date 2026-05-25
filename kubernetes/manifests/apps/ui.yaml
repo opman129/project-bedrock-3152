@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+  namespace: retail-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ui
+  template:
+    metadata:
+      labels:
+        app: ui
+    spec:
+      containers:
+        - name: ui
+          image: public.ecr.aws/aws-containers/retail-store-sample-ui:0.8.5
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ENDPOINTS_CATALOG
+              value: "http://catalog"
+            - name: ENDPOINTS_CARTS
+              value: "http://carts"
+            - name: ENDPOINTS_CHECKOUT
+              value: "http://checkout"
+            - name: ENDPOINTS_ASSETS
+              value: "http://assets"
+            - name: ENDPOINTS_ORDERS
+              value: "http://orders"
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+  namespace: retail-app
+spec:
+  selector:
+    app: ui
+  ports:
+    - port: 80
+      targetPort: 8080

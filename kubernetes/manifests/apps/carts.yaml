@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: carts
+  namespace: retail-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: carts
+  template:
+    metadata:
+      labels:
+        app: carts
+    spec:
+      serviceAccountName: carts-sa
+      containers:
+        - name: carts
+          image: public.ecr.aws/aws-containers/retail-store-sample-cart:0.8.5
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SPRING_REDIS_HOST
+              value: "redis"
+            - name: CARTS_DYNAMODB_TABLENAME
+              value: "project-bedrock-products"
+            - name: AWS_REGION
+              value: "us-east-1"
+            - name: CARTS_DYNAMODB_CREATETABLE
+              value: "false"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "300m"
+              memory: "512Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: carts
+  namespace: retail-app
+spec:
+  selector:
+    app: carts
+  ports:
+    - port: 80
+      targetPort: 8080

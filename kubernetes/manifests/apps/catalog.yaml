@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog
+  namespace: retail-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: catalog
+  template:
+    metadata:
+      labels:
+        app: catalog
+    spec:
+      containers:
+        - name: catalog
+          image: public.ecr.aws/aws-containers/retail-store-sample-catalog:0.8.5
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-db-secret
+                  key: host
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-db-secret
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-db-secret
+                  key: password
+            - name: DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-db-secret
+                  key: dbname
+            - name: DB_READ_ENDPOINT
+              valueFrom:
+                secretKeyRef:
+                  name: catalog-db-secret
+                  key: host
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "64Mi"
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog
+  namespace: retail-app
+spec:
+  selector:
+    app: catalog
+  ports:
+    - port: 80
+      targetPort: 8080
