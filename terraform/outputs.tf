@@ -25,3 +25,11 @@ output "postgres_endpoint" {
 output "dynamodb_table_name" {
   value = aws_dynamodb_table.products.name
 }
+
+output "mysql_secret_arn" {
+  value = aws_secretsmanager_secret.mysql.arn
+}
+
+output "postgres_secret_arn" {
+  value = aws_secretsmanager_secret.postgres.arn
+}
