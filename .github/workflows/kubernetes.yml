@@ -2,14 +2,7 @@ name: Kubernetes Validation
 
 on:
   push:
-    paths:
-      - 'kubernetes/**'
-      - '.github/workflows/kubernetes.yml'
-
   pull_request:
-    paths:
-      - 'kubernetes/**'
-      - '.github/workflows/kubernetes.yml'
 
 jobs:
   validate:
