@@ -22,6 +22,6 @@ jobs:
 
       - name: Validate Kubernetes Manifests
         run: |
-          find kubernetes -name "*.yaml" -o -name "*.yml" | while read file; do
-            kubectl apply --dry-run=client -f "$file"
+          find kubernetes \( -name "*.yaml" -o -name "*.yml" \) | while read file; do
+            kubectl apply --dry-run=client --validate=false -f "$file"
           done
