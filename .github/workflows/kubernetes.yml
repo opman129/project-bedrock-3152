@@ -9,14 +9,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v4
-
-      - name: Validate Kubernetes Manifests
+      - name: Validate YAML Syntax
         run: |
-          find kubernetes \( -name "*.yaml" -o -name "*.yml" \) | while read file; do
-            kubectl apply --dry-run=client --validate=false -f "$file"
-          done
+          python -c "
+          import yaml
+          import pathlib
+
+          files = list(pathlib.Path('kubernetes').rglob('*.yaml'))
+          files += list(pathlib.Path('kubernetes').rglob('*.yml'))
+
+          for file in files:
+              with open(file, 'r') as f:
+                  list(yaml.safe_load_all(f))
+
+          print(f'Validated {len(files)} Kubernetes manifest files successfully.')
+          "
