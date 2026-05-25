@@ -52,12 +52,12 @@ resource "aws_db_instance" "mysql" {
   instance_class = "db.t3.micro"
 
   allocated_storage = 20
-  storage_type      = "gp2"
+  storage_type = "gp3"
 
   db_name = "orders"
 
   username = "admin"
-  password = "ChangeThisPassword123!"
+  manage_master_user_password = true
 
   publicly_accessible = false
 
@@ -84,12 +84,12 @@ resource "aws_db_instance" "postgres" {
   instance_class = "db.t3.micro"
 
   allocated_storage = 20
-  storage_type      = "gp2"
+  storage_type = "gp3"
 
   db_name = "retailcatalog"
 
   username = "postgresadmin"
-  password = "ChangeThisPassword123!"
+  manage_master_user_password = true
 
   publicly_accessible = false
 
