@@ -86,7 +86,7 @@ resource "aws_db_instance" "postgres" {
   allocated_storage = 20
   storage_type      = "gp2"
 
-  db_name = "catalog"
+  db_name = "retailcatalog"
 
   username = "postgresadmin"
   password = "ChangeThisPassword123!"
