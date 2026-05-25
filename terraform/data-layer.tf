@@ -64,7 +64,8 @@ resource "aws_db_instance" "mysql" {
   db_subnet_group_name   = aws_db_subnet_group.bedrock.name
   vpc_security_group_ids = [aws_security_group.rds_sg.id]
 
-  skip_final_snapshot = true
+  skip_final_snapshot       = false
+  final_snapshot_identifier = "project-bedrock-mysql-final"
 
   tags = {
     Project = "karatu-2025-capstone"
@@ -96,7 +97,8 @@ resource "aws_db_instance" "postgres" {
   db_subnet_group_name   = aws_db_subnet_group.bedrock.name
   vpc_security_group_ids = [aws_security_group.rds_sg.id]
 
-  skip_final_snapshot = true
+  skip_final_snapshot       = false
+  final_snapshot_identifier = "project-bedrock-postgres-final"
 
   tags = {
     Project = "karatu-2025-capstone"
