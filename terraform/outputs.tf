@@ -33,3 +33,11 @@ output "mysql_secret_arn" {
 output "postgres_secret_arn" {
   value = aws_secretsmanager_secret.postgres.arn
 }
+
+output "mysql_secret_arn" {
+  value = aws_db_instance.mysql.master_user_secret[0].secret_arn
+}
+
+output "postgres_secret_arn" {
+  value = aws_db_instance.postgres.master_user_secret[0].secret_arn
+}
