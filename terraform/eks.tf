@@ -13,6 +13,12 @@ module "eks" {
 
   subnet_ids = module.vpc.private_subnets
 
+  cluster_addons = {
+    amazon-cloudwatch-observability = {
+      most_recent = true
+    }
+  }
+
   eks_managed_node_groups = {
     bedrock_nodes = {
       desired_size = 4
@@ -22,6 +28,10 @@ module "eks" {
       instance_types = ["t3.small"]
 
       capacity_type = "ON_DEMAND"
+
+      iam_role_additional_policies = {
+        CloudWatchAgentServerPolicy = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+      }
     }
   }
 
