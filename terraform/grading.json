@@ -1,0 +1,47 @@
+{
+  "cluster_endpoint": {
+    "sensitive": false,
+    "type": "string",
+    "value": "https://F3A51670A32AD7AD2200AE85E2592DDF.gr7.us-east-1.eks.amazonaws.com"
+  },
+  "cluster_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "project-bedrock-cluster"
+  },
+  "dynamodb_table_name": {
+    "sensitive": false,
+    "type": "string",
+    "value": "project-bedrock-products"
+  },
+  "mysql_endpoint": {
+    "sensitive": false,
+    "type": "string",
+    "value": "project-bedrock-mysql.cu1myqu4afpd.us-east-1.rds.amazonaws.com:3306"
+  },
+  "mysql_secret_arn": {
+    "sensitive": false,
+    "type": "string",
+    "value": "arn:aws:secretsmanager:us-east-1:680464296107:secret:rds!db-62916505-7b9c-4e6e-a183-423e2b77c997-hekljD"
+  },
+  "postgres_endpoint": {
+    "sensitive": false,
+    "type": "string",
+    "value": "project-bedrock-postgres.cu1myqu4afpd.us-east-1.rds.amazonaws.com:5432"
+  },
+  "postgres_secret_arn": {
+    "sensitive": false,
+    "type": "string",
+    "value": "arn:aws:secretsmanager:us-east-1:680464296107:secret:rds!db-69b9c234-3b07-42b7-b843-8dd495e75ed9-iRIbUs"
+  },
+  "region": {
+    "sensitive": false,
+    "type": "string",
+    "value": "us-east-1"
+  },
+  "vpc_id": {
+    "sensitive": false,
+    "type": "string",
+    "value": "vpc-0dab05994996f47e5"
+  }
+}
