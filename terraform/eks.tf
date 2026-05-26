@@ -13,12 +13,6 @@ module "eks" {
 
   subnet_ids = module.vpc.private_subnets
 
-  cluster_addons = {
-    amazon-cloudwatch-observability = {
-      most_recent = true
-    }
-  }
-
   eks_managed_node_groups = {
     bedrock_nodes = {
       desired_size = 4
