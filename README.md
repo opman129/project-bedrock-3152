@@ -83,7 +83,7 @@ All infrastructure is defined as code in the `terraform/` directory.
 |---|---|---|
 | Cloud Provider | AWS | Region: us-east-1 |
 | Container Orchestration | Amazon EKS 1.33 | Managed node groups |
-| Compute Nodes | EC2 t3.micro | 8 nodes, ON_DEMAND capacity |
+| Compute Nodes | EC2 t3.small | Managed node group, desired 4 nodes, min 2, max 5, ON_DEMAND capacity |
 | Networking | VPC + Subnets + NAT | 2 AZs, public + private subnets |
 | Relational DB (orders) | RDS MySQL 8.0 | db.t3.micro, 20GB gp3, encrypted |
 | Relational DB (catalog) | RDS PostgreSQL 17 | db.t3.micro, 20GB gp3, encrypted |
@@ -437,27 +437,27 @@ The `ADDRESS` field contains the ALB DNS name. The application is available at `
 
 ## Cost Optimisation Decisions
 
-Several deliberate trade-offs were made to keep the project within AWS Free Tier and minimise cost while still demonstrating production patterns.
+Several deliberate trade-offs were made to keep the project cost-conscious while still demonstrating production patterns.
 
 | Decision | Reason |
 |---|---|
-| `t3.micro` EC2 nodes | Free Tier eligible; the only instance type permitted in this account |
+| `t3.small` EC2 nodes | Provides more pod capacity than `t3.micro` while keeping the EKS worker nodes small and inexpensive |
 | Single NAT gateway | Eliminates the cost of one NAT gateway per AZ; acceptable single point of failure for a non-production deployment |
 | `PAY_PER_REQUEST` DynamoDB | No provisioned capacity cost when the table is idle |
 | `db.t3.micro` RDS instances | Smallest available RDS instance; sufficient for a capstone workload |
-| 8 nodes instead of larger instances | Free Tier allows t3.micro only; horizontal scaling compensates for the 4-pod-per-node limit imposed by VPC CNI |
+| 4-node desired capacity | Matches the Terraform managed node group configuration while leaving room to scale between 2 and 5 nodes |
 | `gp3` storage on RDS | 20% cheaper than `gp2` with better baseline performance |
-| Single-replica deployments | Conserves pod slots across 8 t3.micro nodes (32 total slots) |
+| Single-replica deployments | Conserves pod slots across the small managed node group |
 
 ---
 
 ## Challenges and Solutions
 
-### 1. t3.micro Pod Limit (4 pods per node)
+### 1. Worker Node Pod Capacity
 
-**Challenge:** AWS VPC CNI limits pods per node based on ENI count. `t3.micro` supports only 4 pods per node. With kube-system pods already consuming slots, application pods could not be scheduled.
+**Challenge:** AWS VPC CNI limits pods per node based on instance networking capacity. An earlier `t3.micro` worker-node design left too few schedulable pod slots once kube-system workloads were running.
 
-**Solution:** Scaled the node group horizontally to 8 nodes, giving 32 total pod slots. Used `aws eks update-nodegroup-config` directly since the Terraform EKS module ignores `desired_size` changes (to avoid conflicts with cluster autoscaler).
+**Solution:** Updated the Terraform-managed node group to use `t3.small` instances with a desired size of 4, minimum size of 2, and maximum size of 5. This gives the cluster more practical pod capacity while keeping the deployment small.
 
 ### 2. Hardcoded Database Passwords
 
