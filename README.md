@@ -12,7 +12,7 @@ The goal is to demonstrate production patterns that go far beyond a basic Kubern
 
 - Infrastructure provisioned entirely with Terraform
 - Secrets managed through AWS Secrets Manager and synchronised into Kubernetes automatically via External Secrets Operator
-- IAM roles bound to Kubernetes service accounts (IRSA) — no static credentials
+- IAM roles bound to Kubernetes service accounts (IRSA) — no static credentials, all created via Terraform
 - Multi-service microservices application deployed with proper resource constraints
 - CI/CD pipelines validating infrastructure and manifest changes on every push
 
@@ -40,10 +40,11 @@ The goal is to demonstrate production patterns that go far beyond a basic Kubern
                           │  │  rabbitmq   redis                 │   │
                           │  └──────────────────────────────────┘   │
                           │                                          │
-                          │  ┌──────────┐  ┌───────────────────┐   │
-                          │  │ RDS MySQL│  │  RDS PostgreSQL    │   │
-                          │  │ (orders) │  │  (retailcatalog)   │   │
-                          │  └──────────┘  └───────────────────┘   │
+                          │  ┌──────────────────────────────────┐   │
+                          │  │ RDS MySQL 8.0                    │   │
+                          │  │  • orders database (orders svc)  │   │
+                          │  │  • catalog database (catalog svc)│   │
+                          │  └──────────────────────────────────┘   │
                           │                                          │
                           │  ┌────────────┐  ┌──────────────────┐  │
                           │  │  DynamoDB  │  │ Secrets Manager  │  │
@@ -85,8 +86,8 @@ All infrastructure is defined as code in the `terraform/` directory.
 | Container Orchestration | Amazon EKS 1.33 | Managed node groups |
 | Compute Nodes | EC2 t3.small | Managed node group, desired 4 nodes, min 2, max 5, ON_DEMAND capacity |
 | Networking | VPC + Subnets + NAT | 2 AZs, public + private subnets |
-| Relational DB (orders) | RDS MySQL 8.0 | db.t3.micro, 20GB gp3, encrypted |
-| Relational DB (catalog) | RDS PostgreSQL 17 | db.t3.micro, 20GB gp3, encrypted |
+| Relational DB (orders + catalog) | RDS MySQL 8.0 | db.t3.micro, 20GB gp3, encrypted at rest |
+| Relational DB (provisioned) | RDS PostgreSQL 17 | db.t3.micro, 20GB gp3 — provisioned but not used by current app services |
 | NoSQL DB | DynamoDB | PAY_PER_REQUEST billing |
 | Secret Storage | AWS Secrets Manager | RDS native password management |
 | Load Balancing | AWS ALB | Provisioned by ALB Controller |
@@ -103,7 +104,8 @@ terraform/
 ├── networking.tf     # VPC, subnets, NAT gateway
 ├── eks.tf            # EKS cluster and managed node groups
 ├── data-layer.tf     # RDS MySQL, RDS PostgreSQL, DynamoDB
-└── outputs.tf        # Cluster endpoint, DB endpoints, secret ARNs
+├── irsa.tf           # IRSA roles for ALB controller, External Secrets, carts
+└── outputs.tf        # Cluster endpoint, DB endpoints, secret ARNs, role ARNs
 ```
 
 ---
@@ -117,9 +119,9 @@ All application workloads run in the `retail-app` namespace.
 | Service | Image | Backend | Port |
 |---|---|---|---|
 | `ui` | retail-store-sample-ui:0.8.5 | — | 8080 |
-| `catalog` | retail-store-sample-catalog:0.8.5 | RDS MySQL | 8080 |
+| `catalog` | retail-store-sample-catalog:0.8.5 | RDS MySQL (`catalog` database) | 8080 |
 | `carts` | retail-store-sample-cart:0.8.5 | DynamoDB + Redis | 8080 |
-| `orders` | retail-store-sample-orders:0.8.5 | RDS MySQL | 8080 |
+| `orders` | retail-store-sample-orders:0.8.5 | RDS MySQL (`orders` database) | 8080 |
 | `checkout` | retail-store-sample-checkout:0.8.5 | Redis | 8080 |
 | `assets` | retail-store-sample-assets:0.8.5 | — | 8080 |
 | `redis` | redis:7-alpine | — | 6379 |
@@ -130,8 +132,11 @@ All application workloads run in the `retail-app` namespace.
 ```
 kubernetes/
 ├── alb-controller/
-│   └── iam_policy.json              # ALB controller IAM policy
+│   └── iam_policy.json              # ALB controller IAM policy (referenced by irsa.tf)
 └── manifests/
+    ├── base/
+    │   ├── namespace.yaml           # retail-app namespace
+    │   └── serviceaccounts.yaml     # external-secrets-sa and carts-sa (with IRSA annotations)
     ├── apps/
     │   ├── assets.yaml
     │   ├── carts.yaml
@@ -146,11 +151,11 @@ kubernetes/
     ├── ingress/
     │   └── retail-ingress.yaml      # ALB ingress, internet-facing
     └── secrets/
-        ├── secretstore.yaml         # Namespace-scoped SecretStore
-        ├── mysql-external-secret.yaml
-        ├── postgres-external-secret.yaml
-        ├── external-secrets-policy.json
-        └── external-secrets-trust-policy.json
+        ├── secretstore.yaml         # Namespace-scoped SecretStore (retail-app)
+        ├── mysql-external-secret.yaml     # Syncs mysql-secret from Secrets Manager
+        ├── postgres-external-secret.yaml  # Syncs catalog-db-secret from Secrets Manager
+        ├── external-secrets-policy.json   # IAM policy document (applied via irsa.tf)
+        └── external-secrets-trust-policy.json  # Reference trust policy
 ```
 
 ### Ingress
@@ -167,30 +172,29 @@ The `ui` deployment is configured with an HPA that scales between 1 and 3 replic
 
 ### IAM Roles for Service Accounts (IRSA)
 
-No static AWS credentials are used anywhere. Each service that needs AWS access has a dedicated Kubernetes service account bound to an IAM role via OIDC federation.
+No static AWS credentials are used anywhere. Each service that needs AWS access has a dedicated Kubernetes service account bound to an IAM role via OIDC federation. All IRSA roles are created by Terraform in `irsa.tf` and reference `module.eks.oidc_provider_arn` — no manual IAM setup required.
 
 | Service Account | Namespace | IAM Role | Permissions |
 |---|---|---|---|
-| `aws-load-balancer-controller` | kube-system | ALB Controller Role | ELB, EC2 management |
-| `external-secrets` | external-secrets | ExternalSecretsRole | Secrets Manager read |
-| `external-secrets-sa` | retail-app | RetailAppSecretsRole | Secrets Manager read |
-| `carts-sa` | retail-app | CartsRole | DynamoDB read/write on products table |
+| `aws-load-balancer-controller` | kube-system | `project-bedrock-alb-controller-role` | ELB, EC2 management |
+| `external-secrets-sa` | retail-app | `project-bedrock-external-secrets-role` | Secrets Manager read |
+| `carts-sa` | retail-app | `project-bedrock-carts-role` | DynamoDB read/write on products table |
 
 ### Secrets Pipeline
 
-Database credentials are never stored in Kubernetes manifests or environment variables directly. The full flow is:
+Database credentials are never stored in Kubernetes manifests or environment variables directly. The flow for MySQL credentials is:
 
 ```
-AWS Secrets Manager (RDS-managed, auto-rotated)
+AWS Secrets Manager (RDS-managed, auto-generated)
         ↓
 External Secrets Operator (syncs every 1 hour)
         ↓
-Kubernetes Secret (mysql-secret, postgres-secret in retail-app)
+Kubernetes Secrets (mysql-secret in retail-app)
         ↓
 Application pods (injected as environment variables)
 ```
 
-RDS instances use `manage_master_user_password = true`, meaning AWS generates and rotates the master password automatically. Applications read the current credentials from Kubernetes secrets that stay synchronised with Secrets Manager via External Secrets Operator.
+The `catalog` service uses a dedicated `catalog-mysql-creds` Kubernetes Secret (created during setup) holding the `catalog_app` MySQL user credentials. This user has narrowly scoped permissions on the `catalog` database only.
 
 ### Network Security
 
@@ -259,26 +263,49 @@ At the cluster level, `kubectl logs`, `kubectl describe`, and `kubectl top` prov
 
 ---
 
-## Deployment Instructions
+## Startup — Full Deployment
 
 ### Prerequisites
 
-- AWS CLI configured with appropriate IAM permissions
+Ensure the following tools are installed and configured before starting:
+
+- AWS CLI — authenticated with sufficient IAM permissions (`AdministratorAccess` or equivalent)
 - Terraform >= 1.5
 - kubectl
 - helm
-- eksctl
 
-### 1. Provision Infrastructure
+---
+
+### Step 1 — Create the Terraform State Bucket
+
+This is a one-time step. Skip if the bucket already exists.
+
+```bash
+aws s3api create-bucket \
+  --bucket project-bedrock-tfstate-3152 \
+  --region us-east-1
+
+aws s3api put-bucket-versioning \
+  --bucket project-bedrock-tfstate-3152 \
+  --versioning-configuration Status=Enabled
+```
+
+---
+
+### Step 2 — Provision AWS Infrastructure
+
+This creates the VPC, EKS cluster, RDS instances, DynamoDB table, and all IRSA IAM roles.
 
 ```bash
 cd terraform
-cp terraform.tfvars.example terraform.tfvars
 terraform init
 terraform apply
+cd ..
 ```
 
-### 2. Configure kubectl
+---
+
+### Step 3 — Configure kubectl
 
 ```bash
 aws eks update-kubeconfig \
@@ -286,136 +313,194 @@ aws eks update-kubeconfig \
   --region us-east-1
 ```
 
-### 3. Install AWS Load Balancer Controller
+Verify the connection:
 
 ```bash
-# Create IAM policy
-aws iam create-policy \
-  --policy-name AWSLoadBalancerControllerIAMPolicy \
-  --policy-document file://kubernetes/alb-controller/iam_policy.json
+kubectl get nodes
+```
 
-# Create IRSA service account
-eksctl create iamserviceaccount \
-  --cluster=project-bedrock-cluster \
-  --namespace=kube-system \
-  --name=aws-load-balancer-controller \
-  --role-name=AWSLoadBalancerControllerRole \
-  --attach-policy-arn=arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy \
-  --approve \
-  --region=us-east-1
+---
 
-# Install via Helm
+### Step 4 — Install AWS Load Balancer Controller
+
+The IAM role was already created by Terraform. Fetch its ARN and install via Helm.
+
+```bash
+ALB_ROLE_ARN=$(cd terraform && terraform output -raw alb_controller_role_arn)
+
 helm repo add eks https://aws.github.io/eks-charts
+helm repo update
+
 helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
   -n kube-system \
   --set clusterName=project-bedrock-cluster \
-  --set serviceAccount.create=false \
-  --set serviceAccount.name=aws-load-balancer-controller
+  --set serviceAccount.create=true \
+  --set serviceAccount.name=aws-load-balancer-controller \
+  --set "serviceAccount.annotations.eks\.amazonaws\.com/role-arn=${ALB_ROLE_ARN}"
 ```
 
-### 4. Install External Secrets Operator
+---
+
+### Step 5 — Install External Secrets Operator
 
 ```bash
 helm repo add external-secrets https://charts.external-secrets.io
+helm repo update
+
 helm install external-secrets external-secrets/external-secrets \
   -n external-secrets \
   --create-namespace
 ```
 
-### 5. Set Up IRSA for External Secrets
+---
+
+### Step 6 — Deploy Kubernetes Base Resources
+
+Apply the namespace and service accounts (IRSA annotations are already set).
 
 ```bash
-# Create IAM policy
-aws iam create-policy \
-  --policy-name ExternalSecretsPolicy \
-  --policy-document file://kubernetes/manifests/secrets/external-secrets-policy.json
-
-# Create IRSA role for external-secrets namespace
-aws iam create-role \
-  --role-name ExternalSecretsRole \
-  --assume-role-policy-document file://kubernetes/manifests/secrets/external-secrets-trust-policy.json
-
-aws iam attach-role-policy \
-  --role-name ExternalSecretsRole \
-  --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/ExternalSecretsPolicy
-
-kubectl annotate serviceaccount external-secrets \
-  -n external-secrets \
-  eks.amazonaws.com/role-arn=arn:aws:iam::<ACCOUNT_ID>:role/ExternalSecretsRole
-
-kubectl rollout restart deployment external-secrets -n external-secrets
+kubectl apply -f kubernetes/manifests/base/
 ```
 
-### 6. Set Up retail-app Namespace and Secrets
+---
+
+### Step 7 — Apply Secrets and Wait for Sync
 
 ```bash
-kubectl create namespace retail-app
-
-# IRSA for retail-app secrets access
-eksctl create iamserviceaccount \
-  --cluster=project-bedrock-cluster \
-  --namespace=retail-app \
-  --name=external-secrets-sa \
-  --role-name=RetailAppSecretsRole \
-  --attach-policy-arn=arn:aws:iam::<ACCOUNT_ID>:policy/ExternalSecretsPolicy \
-  --approve \
-  --region=us-east-1
-
-# IRSA for carts DynamoDB access
-aws iam create-policy \
-  --policy-name CartsDynamoDBPolicy \
-  --policy-document '{
-    "Version": "2012-10-17",
-    "Statement": [{
-      "Effect": "Allow",
-      "Action": ["dynamodb:GetItem","dynamodb:PutItem","dynamodb:UpdateItem",
-                 "dynamodb:DeleteItem","dynamodb:Query","dynamodb:Scan"],
-      "Resource": "arn:aws:dynamodb:us-east-1:<ACCOUNT_ID>:table/project-bedrock-products"
-    }]
-  }'
-
-eksctl create iamserviceaccount \
-  --cluster=project-bedrock-cluster \
-  --namespace=retail-app \
-  --name=carts-sa \
-  --role-name=CartsDynamoDBRole \
-  --attach-policy-arn=arn:aws:iam::<ACCOUNT_ID>:policy/CartsDynamoDBPolicy \
-  --approve \
-  --region=us-east-1
-
-# Apply SecretStore and ExternalSecrets
 kubectl apply -f kubernetes/manifests/secrets/secretstore.yaml
 kubectl apply -f kubernetes/manifests/secrets/mysql-external-secret.yaml
 kubectl apply -f kubernetes/manifests/secrets/postgres-external-secret.yaml
+
+# Wait for mysql-secret to be populated before continuing
+kubectl wait externalsecret mysql-secret \
+  -n retail-app \
+  --for=condition=Ready \
+  --timeout=120s
 ```
 
-### 7. Deploy Application Services
+---
+
+### Step 8 — Prepare the Catalog MySQL Database
+
+The catalog service runs as a dedicated `catalog_app` database user. This step creates the `catalog` database and the application user on the MySQL RDS instance.
 
 ```bash
-kubectl apply -f kubernetes/manifests/apps/redis.yaml
-kubectl apply -f kubernetes/manifests/apps/rabbitmq.yaml
-kubectl apply -f kubernetes/manifests/apps/catalog.yaml
-kubectl apply -f kubernetes/manifests/apps/carts.yaml
-kubectl apply -f kubernetes/manifests/apps/orders.yaml
-kubectl apply -f kubernetes/manifests/apps/checkout.yaml
-kubectl apply -f kubernetes/manifests/apps/assets.yaml
-kubectl apply -f kubernetes/manifests/apps/ui.yaml
+MYSQL_HOST=$(kubectl get secret mysql-secret -n retail-app \
+  -o jsonpath='{.data.host}' | base64 -d)
+MYSQL_USER=$(kubectl get secret mysql-secret -n retail-app \
+  -o jsonpath='{.data.username}' | base64 -d)
+MYSQL_PASS=$(kubectl get secret mysql-secret -n retail-app \
+  -o jsonpath='{.data.password}' | base64 -d)
+
+kubectl run mysql-setup --image=mysql:8.0 --restart=Never -n retail-app \
+  --env="H=$MYSQL_HOST" --env="U=$MYSQL_USER" --env="P=$MYSQL_PASS" \
+  --command -- sh -c 'mysql -h "$H" -u "$U" -p"$P" -e "
+    CREATE DATABASE IF NOT EXISTS catalog;
+    CREATE USER IF NOT EXISTS '"'"'catalog_app'"'"'@'"'"'%'"'"'
+      IDENTIFIED WITH mysql_native_password BY '"'"'CatalogApp2026x'"'"';
+    GRANT ALL PRIVILEGES ON catalog.* TO '"'"'catalog_app'"'"'@'"'"'%'"'"';
+    FLUSH PRIVILEGES;"'
+
+kubectl wait pod/mysql-setup -n retail-app \
+  --for=condition=Ready --timeout=60s 2>/dev/null || true
+kubectl logs mysql-setup -n retail-app
+kubectl delete pod mysql-setup -n retail-app
 ```
 
-### 8. Apply Ingress and Autoscaling
+Then store the catalog credentials as a Kubernetes Secret:
 
 ```bash
-kubectl apply -f kubernetes/manifests/ingress/retail-ingress.yaml
-kubectl apply -f kubernetes/manifests/autoscaling/ui-hpa.yaml
+kubectl create secret generic catalog-mysql-creds -n retail-app \
+  --from-literal=username=catalog_app \
+  --from-literal=password=CatalogApp2026x \
+  --from-literal=host="$(kubectl get secret mysql-secret -n retail-app \
+    -o jsonpath='{.data.host}' | base64 -d)"
 ```
 
-### 9. Get the Application URL
+---
+
+### Step 9 — Deploy Application Services
 
 ```bash
-kubectl get ingress retail-ingress -n retail-app
+kubectl apply -f kubernetes/manifests/apps/
 ```
 
-The `ADDRESS` field contains the ALB DNS name. The application is available at `http://<ALB_DNS>`.
+---
+
+### Step 10 — Apply Ingress and Autoscaling
+
+```bash
+kubectl apply -f kubernetes/manifests/ingress/
+kubectl apply -f kubernetes/manifests/autoscaling/
+```
+
+---
+
+### Step 11 — Verify All Pods Are Running
+
+```bash
+kubectl get pods -n retail-app
+```
+
+All eight pods should show `1/1 Running`:
+
+```
+NAME                      READY   STATUS    RESTARTS   AGE
+assets-...                1/1     Running   0          ...
+carts-...                 1/1     Running   0          ...
+catalog-...               1/1     Running   0          ...
+checkout-...              1/1     Running   0          ...
+orders-...                1/1     Running   0          ...
+rabbitmq-...              1/1     Running   0          ...
+redis-...                 1/1     Running   0          ...
+ui-...                    1/1     Running   0          ...
+```
+
+---
+
+### Step 12 — Get the Application URL
+
+```bash
+kubectl get ingress retail-ingress -n retail-app \
+  -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+```
+
+The ALB takes approximately 2 minutes to become active after the Ingress is applied. Open `http://<ALB_HOSTNAME>/home` in a browser once the ADDRESS field is populated.
+
+---
+
+## Shutdown — Teardown
+
+### Step 1 — Delete Application Workloads
+
+```bash
+kubectl delete -f kubernetes/manifests/autoscaling/
+kubectl delete -f kubernetes/manifests/ingress/
+kubectl delete -f kubernetes/manifests/apps/
+kubectl delete secret catalog-mysql-creds -n retail-app
+kubectl delete -f kubernetes/manifests/secrets/postgres-external-secret.yaml
+kubectl delete -f kubernetes/manifests/secrets/mysql-external-secret.yaml
+kubectl delete -f kubernetes/manifests/secrets/secretstore.yaml
+kubectl delete -f kubernetes/manifests/base/
+```
+
+### Step 2 — Uninstall Helm Releases
+
+```bash
+helm uninstall aws-load-balancer-controller -n kube-system
+helm uninstall external-secrets -n external-secrets
+kubectl delete namespace external-secrets
+```
+
+### Step 3 — Destroy AWS Infrastructure
+
+```bash
+cd terraform
+terraform destroy
+cd ..
+```
+
+> **Note:** Both RDS instances will create final snapshots named `project-bedrock-mysql-final` and `project-bedrock-postgres-final` before deletion. Delete these manually from the RDS console if they are no longer needed to avoid ongoing snapshot storage costs.
 
 ---
 
@@ -463,74 +548,31 @@ Several deliberate trade-offs were made to keep the project cost-conscious while
 
 **Challenge:** The initial Terraform config had plaintext passwords in `data-layer.tf`.
 
-**Solution:** Replaced with `manage_master_user_password = true` on both RDS instances. AWS now generates, stores, and rotates the master password in Secrets Manager. External Secrets Operator syncs the credentials into Kubernetes secrets automatically.
+**Solution:** Replaced with `manage_master_user_password = true` on both RDS instances. AWS now generates and stores the master password in Secrets Manager. External Secrets Operator syncs the credentials into Kubernetes secrets automatically.
 
-### 3. MySQL Authentication Plugin Incompatibility
+### 3. Catalog Service Password Corruption
 
-**Challenge:** MySQL 8.0 on RDS defaults to `caching_sha2_password`. The catalog service's Go MySQL driver did not support this plugin, resulting in "Access Denied" errors despite correct credentials.
+**Challenge:** The catalog service Go binary uses the Viper configuration library, which performs environment variable expansion on config values at startup. The AWS-generated RDS master password contained `$` characters (e.g. `$beE0psHIbuGB~8Ks`). Viper treated `$beE0psHIbuGB` as a shell variable reference, expanded it to an empty string, and sent a corrupted password to MySQL — resulting in persistent `Access denied` errors even though the credentials in the Kubernetes secret were correct.
 
-**Solution:** Created a dedicated `catalog_app` database user with `mysql_native_password` authentication plugin and stored the credentials in a Kubernetes secret. This also follows the principle of least privilege — the catalog service no longer uses the admin account.
+**Solution:** Created a dedicated `catalog_app` MySQL user with the `mysql_native_password` plugin and a simple alphanumeric password containing no `$` or shell-special characters. This user is granted permissions only on the `catalog` database. Its credentials are stored in a `catalog-mysql-creds` Kubernetes secret and injected into the catalog pod directly, bypassing the Viper expansion issue and following least-privilege access.
 
-### 4. Orders Service JDBC Driver Mismatch
+### 4. Orders Service JDBC Driver Conflict
 
-**Challenge:** The orders Spring Boot image bundles the MariaDB JDBC driver, not MySQL Connector/J. Setting `SPRING_DATASOURCE_URL=jdbc:mysql://...` caused a `ClassNotFoundException` for `com.mysql.cj.jdbc.Driver`.
+**Challenge:** Setting `SPRING_DATASOURCE_URL=jdbc:mariadb://...` caused a `ClassNotFoundException` for `org.mariadb.jdbc.Driver`. Switching to `jdbc:mysql://...` caused the same error for `com.mysql.cj.jdbc.Driver`. Neither driver was discoverable by the HikariCP classloader, even though the orders Spring Boot image had previously started successfully.
 
-**Solution:** Changed the JDBC URL prefix to `jdbc:mariadb://`. The MariaDB connector is fully compatible with MySQL 8.0 and correctly initialises the Spring Data JDBC context.
+**Solution:** The orders image bundles its own internal datasource URL in `application.properties` that references the correct, bundled driver. Overriding `SPRING_DATASOURCE_URL` with any scheme forced Spring Boot to look for a driver that was not in the classpath. Removing the `SPRING_DATASOURCE_URL` env var entirely — while retaining `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, and `DB_HOST` — lets the image use its own default URL and resolves the issue.
 
-### 5. External Secrets API Version Mismatch
+### 5. Stale RDS Secret IDs After Re-deployment
 
-**Challenge:** Manifests written for `external-secrets.io/v1beta1` failed to apply because the installed version of External Secrets Operator serves resources under `external-secrets.io/v1`.
+**Challenge:** After tearing down and re-provisioning the infrastructure, the ExternalSecret manifests still referenced the old Secrets Manager secret keys from the previous deployment (e.g. `rds!db-62916505-...`). The new RDS instances generate new secret IDs. The ExternalSecrets entered `SecretSyncedError` and the app pods could not start.
 
-**Solution:** Updated all ExternalSecret, SecretStore, and ClusterSecretStore manifests to use `apiVersion: external-secrets.io/v1`.
+**Solution:** After each `terraform apply`, retrieve the new secret ARNs from Terraform outputs and update `mysql-external-secret.yaml` and `postgres-external-secret.yaml` with the correct keys. The grading outputs are saved to `terraform/grading.json` for reference.
 
-### 6. RDS-Managed Secret Fields
+### 6. IRSA Not Wired for ALB Controller, External Secrets, or Carts
 
-**Challenge:** The ExternalSecret manifests attempted to pull `host` and `dbname` fields from the RDS-managed Secrets Manager secret. RDS native password management only stores `username` and `password`.
+**Challenge:** The initial configuration had IAM policy JSON files but no Terraform resources to create the IRSA roles, and no Kubernetes ServiceAccount manifests with the correct annotations.
 
-**Solution:** Used ExternalSecret's `spec.target.template` to inject static connection details (host, dbname, port) alongside the dynamically fetched credentials, producing a complete connection secret from a single ExternalSecret resource.
-
----
-
-## Cleanup Instructions
-
-### Destroy Kubernetes Resources
-
-```bash
-kubectl delete -f kubernetes/manifests/ingress/
-kubectl delete -f kubernetes/manifests/autoscaling/
-kubectl delete -f kubernetes/manifests/apps/
-kubectl delete -f kubernetes/manifests/secrets/
-kubectl delete namespace retail-app
-kubectl delete namespace external-secrets
-```
-
-### Remove Helm Releases
-
-```bash
-helm uninstall aws-load-balancer-controller -n kube-system
-helm uninstall external-secrets -n external-secrets
-```
-
-### Remove IRSA Resources
-
-```bash
-eksctl delete iamserviceaccount --cluster=project-bedrock-cluster --namespace=retail-app --name=external-secrets-sa --region=us-east-1
-eksctl delete iamserviceaccount --cluster=project-bedrock-cluster --namespace=retail-app --name=carts-sa --region=us-east-1
-eksctl delete iamserviceaccount --cluster=project-bedrock-cluster --namespace=kube-system --name=aws-load-balancer-controller --region=us-east-1
-
-aws iam delete-policy --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/ExternalSecretsPolicy
-aws iam delete-policy --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/CartsDynamoDBPolicy
-aws iam delete-policy --policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/AWSLoadBalancerControllerIAMPolicy
-```
-
-### Destroy Infrastructure
-
-```bash
-cd terraform
-terraform destroy
-```
-
-> **Note:** Both RDS instances will create final snapshots named `project-bedrock-mysql-final` and `project-bedrock-postgres-final` before deletion. Delete these manually from the RDS console if they are no longer needed to avoid ongoing snapshot storage costs.
+**Solution:** Added `terraform/irsa.tf` to create all three IRSA roles (ALB controller, External Secrets, carts) dynamically using `module.eks.oidc_provider_arn` and `module.eks.cluster_oidc_issuer_url`. Added `kubernetes/manifests/base/serviceaccounts.yaml` with the IRSA role ARN annotations pre-populated.
 
 ---
 
@@ -542,9 +584,9 @@ terraform destroy
 | IaC | Terraform >= 1.5 |
 | Container Orchestration | Amazon EKS 1.33 |
 | Secret Management | AWS Secrets Manager + External Secrets Operator |
-| Identity | IRSA (IAM Roles for Service Accounts) |
+| Identity | IRSA (IAM Roles for Service Accounts) — all managed by Terraform |
 | Ingress | AWS ALB via Load Balancer Controller |
-| Databases | RDS MySQL 8.0, RDS PostgreSQL 17, DynamoDB |
+| Databases | RDS MySQL 8.0 (orders + catalog), RDS PostgreSQL 17 (provisioned), DynamoDB |
 | Messaging | RabbitMQ 3 |
 | Caching | Redis 7 |
 | CI/CD | GitHub Actions |
