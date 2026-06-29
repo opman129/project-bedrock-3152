@@ -24,8 +24,6 @@ spec:
                 secretKeyRef:
                   name: mysql-secret
                   key: host
-            - name: SPRING_DATASOURCE_URL
-              value: "jdbc:mariadb://$(DB_HOST):3306/orders"
             - name: SPRING_DATASOURCE_USERNAME
               valueFrom:
                 secretKeyRef:

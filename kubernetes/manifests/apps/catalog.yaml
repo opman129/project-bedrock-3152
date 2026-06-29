@@ -22,28 +22,27 @@ spec:
             - name: DB_ENDPOINT
               valueFrom:
                 secretKeyRef:
-                  name: catalog-db-secret
+                  name: catalog-mysql-creds
                   key: host
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
-                  name: catalog-db-secret
+                  name: catalog-mysql-creds
                   key: username
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: catalog-db-secret
+                  name: catalog-mysql-creds
                   key: password
             - name: DB_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: catalog-db-secret
-                  key: dbname
+              value: "catalog"
             - name: DB_READ_ENDPOINT
               valueFrom:
                 secretKeyRef:
-                  name: catalog-db-secret
+                  name: catalog-mysql-creds
                   key: host
+            - name: DB_PORT
+              value: "3306"
           resources:
             requests:
               cpu: "50m"
